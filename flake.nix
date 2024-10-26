@@ -1,5 +1,5 @@
 {
-  description = "vm";
+  description = "lang";
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs";
     flake-parts = {
