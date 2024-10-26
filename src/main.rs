@@ -61,7 +61,7 @@ entry = n: uint => uint {
 
     dbg!(&scope);
 
-    let out = eval(&program, Some(&scope))?;
+    let out = eval(&program, &scope)?;
 
     println!("out: {out}");
     Ok(())

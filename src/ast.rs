@@ -28,7 +28,7 @@ peg::parser! {
         rule alphanumeric() = ['a'..='z' | 'A'..='Z' | '0'..='9']
 
         rule ident() -> Ident
-            = s:$(['a'..='z' | 'A'..='Z']['a'..='z' | 'A'..='Z' | '0'..='9']*) { Ident::new(s).unwrap() }
+            = s:$(['a'..='z' | 'A'..='Z']alphanumeric()*) { Ident::new(s).unwrap() }
 
         pub rule ty() -> Ty
             = ts:(_ ts:(
