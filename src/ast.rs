@@ -116,7 +116,7 @@ peg::parser! {
     }
 }
 
-fn fold_lambda_expr(mut args: Vec<LambdaArg>, t: Ty, e: Expr) -> Expr {
+pub fn fold_lambda_expr(mut args: Vec<LambdaArg>, t: Ty, e: Expr) -> Expr {
     let arg = args.pop().unwrap();
 
     let expr = args.into_iter().rev().fold(

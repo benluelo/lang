@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -53,7 +54,7 @@ impl Display for Expr {
                 }
                 write!(f, ")")
             }
-            Expr::Builtin(_) => write!(f, "<builtin>"),
+            Expr::Builtin(builtin) => write!(f, "{builtin:?}"),
         }
     }
 }
@@ -182,11 +183,11 @@ impl Display for Block {
 }
 
 #[derive(Clone)]
-pub struct Builtin(Arc<dyn BuiltinFn>);
+pub struct Builtin(Cow<'static, str>, Arc<dyn BuiltinFn>);
 
 impl Debug for Builtin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<builtin>")
+        write!(f, "<builtin {}>", self.0)
     }
 }
 
@@ -197,14 +198,14 @@ impl PartialEq for Builtin {
 }
 
 impl Builtin {
-    pub fn new(f: impl BuiltinFn) -> Self {
-        Self(Arc::new(f))
+    pub fn new(name: impl Into<Cow<'static, str>>, f: impl BuiltinFn) -> Self {
+        Self(name.into(), Arc::new(f))
     }
 
-    pub fn call(&self, scope: &Scope) -> Expr {
-        (self.0)(scope)
+    pub fn call(&self, scope: &Scope) -> anyhow::Result<Expr> {
+        (self.1)(scope)
     }
 }
 
-pub trait BuiltinFn: Fn(&Scope<'_>) -> Expr + 'static {}
-impl<T> BuiltinFn for T where T: (Fn(&Scope<'_>) -> Expr) + 'static {}
+pub trait BuiltinFn: Fn(&Scope<'_>) -> anyhow::Result<Expr> + 'static {}
+impl<T> BuiltinFn for T where T: (Fn(&Scope<'_>) -> anyhow::Result<Expr>) + 'static {}

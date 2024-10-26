@@ -118,7 +118,7 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
                 ))
             }
         }
-        Expr::Builtin(builtin) => Ok(builtin.call(scope)),
+        Expr::Builtin(builtin) => builtin.call(scope),
         e => Ok(e.clone()),
     }
 }

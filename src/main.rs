@@ -54,6 +54,7 @@ entry = n: uint => uint {
         [
             (ident!("add"), builtins::add()),
             (ident!("sub"), builtins::sub()),
+            (ident!("mul"), builtins::mul()),
         ]
         .into_iter()
         .collect(),
@@ -68,76 +69,66 @@ entry = n: uint => uint {
 }
 
 pub mod builtins {
+    macro_rules! builtin {
+        (pub fn $f:ident($scope:ident: &Scope, $($arg:ident: $ty:ty),+) -> $ret:ty $body:block) => {
+            pub fn $f() -> Expr {
+                fold_lambda_expr(
+                    vec![$(
+                        LambdaArg {
+                            name: Ident::new_static(stringify!($arg)),
+                            ty: Ty::Atom(AtomTy::from_ident_static(stringify!($ty))),
+                        }
+                    ),+],
+                    Ty::Atom(AtomTy::from_ident_static(stringify!($ret))),
+                    Expr::Builtin(Builtin::new(stringify!($f), |$scope| $body)),
+                )
+            }
+        };
+    }
+
+    use anyhow::bail;
+
     use crate::{
-        ast::{AtomTy, Builtin, Expr, Lambda, LambdaArg, LitExpr, Ty},
+        ast::{fold_lambda_expr, AtomTy, Builtin, Expr, Ident, Lambda, LambdaArg, LitExpr, Ty},
         ident,
     };
 
-    pub fn add() -> Expr {
-        Expr::Lambda(Lambda {
-            arg: LambdaArg {
-                name: ident!("a"),
-                ty: Ty::Atom(AtomTy::Int),
-            },
-            expr: Box::new(Expr::Lambda(Lambda {
-                arg: LambdaArg {
-                    name: ident!("b"),
-                    ty: Ty::Atom(AtomTy::Int),
-                },
-                expr: Box::new(Expr::Builtin(Builtin::new(|scope| {
-                    // dbg!(&scope);
+    builtin! {
+        pub fn add(scope: &Scope, a: int, b: int) -> int {
+            let a = scope.get(&ident!("a")).unwrap();
+            let b = scope.get(&ident!("b")).unwrap();
 
-                    let a = scope.get(&ident!("a")).unwrap();
-                    let b = scope.get(&ident!("b")).unwrap();
+            let (Expr::Lit(LitExpr::Int(a)), Expr::Lit(LitExpr::Int(b))) = (a, b) else {
+                bail!("cannot add `{a}` and `{b}`")
+            };
 
-                    let (Expr::Lit(LitExpr::Int(a)), Expr::Lit(LitExpr::Int(b))) = (a, b) else {
-                        panic!("cannot add `{a}` and `{b}`")
-                    };
-
-                    Expr::Lit(LitExpr::Int(a + b))
-                }))),
-                ret: Ty::Atom(AtomTy::Int),
-            })),
-            ret: Ty::Fn(
-                Box::new(Ty::Atom(AtomTy::Int)),
-                Box::new(Ty::Atom(AtomTy::Int)),
-            ),
-        })
+            Ok(Expr::Lit(LitExpr::Int(a + b)))
+        }
     }
 
-    pub fn sub() -> Expr {
-        Expr::Lambda(Lambda {
-            arg: LambdaArg {
-                name: ident!("a"),
-                ty: Ty::Atom(AtomTy::Int),
-            },
-            expr: Box::new(Expr::Lambda(Lambda {
-                arg: LambdaArg {
-                    name: ident!("b"),
-                    ty: Ty::Atom(AtomTy::Int),
-                },
-                expr: Box::new(Expr::Builtin(Builtin::new(|scope| {
-                    // dbg!(&scope);
+    builtin! {
+        pub fn sub(scope: &Scope, a: int, b: int) -> int {
+            let a = scope.get(&ident!("a")).unwrap();
+            let b = scope.get(&ident!("b")).unwrap();
 
-                    let a = scope.get(&ident!("a")).unwrap();
-                    let b = scope.get(&ident!("b")).unwrap();
+            let (Expr::Lit(LitExpr::Int(a)), Expr::Lit(LitExpr::Int(b))) = (a, b) else {
+                bail!("cannot sub `{a}` and `{b}`")
+            };
 
-                    let (Expr::Lit(LitExpr::Int(a)), Expr::Lit(LitExpr::Int(b))) = (a, b) else {
-                        panic!("cannot sub `{a}` and `{b}`")
-                    };
-
-                    Expr::Lit(LitExpr::Int(a - b))
-                }))),
-                ret: Ty::Atom(AtomTy::Int),
-            })),
-            ret: Ty::Fn(
-                Box::new(Ty::Atom(AtomTy::Int)),
-                Box::new(Ty::Atom(AtomTy::Int)),
-            ),
-        })
+            Ok(Expr::Lit(LitExpr::Int(a - b)))
+        }
     }
-}
 
-macro_rules! builtin {
-    () => {};
+    builtin! {
+        pub fn mul(scope: &Scope, a: int, b: int) -> int {
+            let a = scope.get(&ident!("a")).unwrap();
+            let b = scope.get(&ident!("b")).unwrap();
+
+            let (Expr::Lit(LitExpr::Int(a)), Expr::Lit(LitExpr::Int(b))) = (a, b) else {
+                bail!("cannot mul `{a}` and `{b}`")
+            };
+
+            Ok(Expr::Lit(LitExpr::Int(a * b)))
+        }
+    }
 }
