@@ -28,10 +28,7 @@ peg::parser! {
         rule alphanumeric() = ['a'..='z' | 'A'..='Z' | '0'..='9']
 
         rule ident() -> Ident
-            = s:$(['a'..='z' | 'A'..='Z']['a'..='z' | 'A'..='Z' | '0'..='9']*) { Ident::new(dbg!(s)).unwrap() }
-
-        // pub rule ty() -> Ty
-        //     = _ head:ty() _ "->" _ tail:fn_ty() _ { Ty::Fn([head].into_iter().chain(tail).collect()) }
+            = s:$(['a'..='z' | 'A'..='Z']['a'..='z' | 'A'..='Z' | '0'..='9']*) { Ident::new(s).unwrap() }
 
         pub rule ty() -> Ty
             = ts:(_ ts:(
@@ -43,8 +40,8 @@ peg::parser! {
                 if ts.len() == 1 {
                     ts.pop().unwrap()
                 } else {
-                    ts.into_iter().reduce(|a, b| {
-                        Ty::Fn(Box::new(a), Box::new(b))
+                    ts.into_iter().rev().reduce(|a, b| {
+                        Ty::Fn(Box::new(b), Box::new(a))
                     })
                     .expect("expected at least 2 values")
                 }
@@ -122,18 +119,22 @@ peg::parser! {
 fn fold_lambda_expr(mut args: Vec<LambdaArg>, t: Ty, e: Expr) -> Expr {
     let arg = args.pop().unwrap();
 
-    Expr::Lambda(args.into_iter().rev().fold(
+    let expr = args.into_iter().rev().fold(
         Lambda {
             arg,
             ret: t,
             expr: Box::new(e),
         },
         |prev, arg| Lambda {
-            ret: Ty::Fn(Box::new(arg.ty.clone()), Box::new(prev.ret.clone())),
+            ret: prev.sig(),
             arg,
             expr: Box::new(Expr::Lambda(prev)),
         },
-    ))
+    );
+
+    // dbg!(&expr);
+
+    Expr::Lambda(expr)
 }
 
 #[cfg(test)]
@@ -282,6 +283,30 @@ mod tests {
     }
 
     #[test]
+    fn fold_lambda_args() {
+        let args = vec![
+            LambdaArg {
+                name: ident!("a"),
+                ty: Ty::Atom(AtomTy::Named(ident!("a"))),
+            },
+            LambdaArg {
+                name: ident!("b"),
+                ty: Ty::Atom(AtomTy::Named(ident!("b"))),
+            },
+            LambdaArg {
+                name: ident!("c"),
+                ty: Ty::Atom(AtomTy::Named(ident!("c"))),
+            },
+        ];
+
+        assert_parse(
+            ast::lambda_expr,
+            "a:a=>b->c->bool b:b=>c->bool c:c=>bool true",
+            fold_lambda_expr(args, Ty::Atom(AtomTy::Bool), Expr::Lit(LitExpr::Bool(true))),
+        );
+    }
+
+    #[test]
     fn lambda_expr() {
         assert_parse(
             ast::lambda_expr,
@@ -293,6 +318,41 @@ mod tests {
                 },
                 expr: Box::new(Expr::Var(ident!("n"))),
                 ret: Ty::Atom(AtomTy::Int),
+            }),
+        );
+        assert_parse(
+            ast::lambda_expr,
+            "a: a b: b c: c => int 1",
+            Expr::Lambda(Lambda {
+                arg: LambdaArg {
+                    name: ident!("a"),
+                    ty: Ty::Atom(AtomTy::Named(ident!("a"))),
+                },
+                expr: Box::new(Expr::Lambda(Lambda {
+                    arg: LambdaArg {
+                        name: ident!("b"),
+                        ty: Ty::Atom(AtomTy::Named(ident!("b"))),
+                    },
+                    expr: Box::new(Expr::Lambda(Lambda {
+                        arg: LambdaArg {
+                            name: ident!("c"),
+                            ty: Ty::Atom(AtomTy::Named(ident!("c"))),
+                        },
+                        expr: Box::new(Expr::Lit(LitExpr::Int(1))),
+                        ret: Ty::Atom(AtomTy::Int),
+                    })),
+                    ret: Ty::Fn(
+                        Box::new(Ty::Atom(AtomTy::Named(ident!("c")))),
+                        Box::new(Ty::Atom(AtomTy::Int)),
+                    ),
+                })),
+                ret: Ty::Fn(
+                    Box::new(Ty::Atom(AtomTy::Named(ident!("b")))),
+                    Box::new(Ty::Fn(
+                        Box::new(Ty::Atom(AtomTy::Named(ident!("c")))),
+                        Box::new(Ty::Atom(AtomTy::Int)),
+                    )),
+                ),
             }),
         );
     }

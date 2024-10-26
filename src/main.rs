@@ -1,4 +1,5 @@
 #![feature(trait_alias)]
+#![warn(clippy::unwrap_in_result)]
 
 use crate::program::{eval, Scope};
 
@@ -6,7 +7,7 @@ pub mod ast;
 
 pub mod program;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let input = "
 entry = n: uint => uint {
 x=1;1
@@ -60,9 +61,10 @@ entry = n: uint => uint {
 
     dbg!(&scope);
 
-    let out = eval(&program, Some(&scope));
+    let out = eval(&program, Some(&scope))?;
 
     println!("out: {out}");
+    Ok(())
 }
 
 pub mod builtins {
@@ -134,4 +136,8 @@ pub mod builtins {
             ),
         })
     }
+}
+
+macro_rules! builtin {
+    () => {};
 }

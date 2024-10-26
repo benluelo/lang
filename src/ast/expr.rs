@@ -121,6 +121,12 @@ pub struct Lambda {
     pub expr: Box<Expr>,
 }
 
+impl Lambda {
+    pub fn sig(&self) -> Ty {
+        Ty::Fn(Box::new(self.arg.ty.clone()), Box::new(self.ret.clone()))
+    }
+}
+
 impl Display for Lambda {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // match &*self.arg {

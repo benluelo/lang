@@ -26,7 +26,7 @@ impl Display for Ty {
                 write!(f, ")")
             }
             Ty::Fn(a, b) => {
-                write!(f, "({a}->{b})")
+                write!(f, "{a}->{b}")
             }
         }
     }
