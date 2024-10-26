@@ -1,18 +1,22 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, bail};
+use tracing::debug;
 
-use crate::ast::{AtomTy, Expr, Ident, LitExpr, Pat, Ty};
+use crate::ast::{AtomTy, Block, CaseArm, Expr, Ident, Lambda, LitExpr, Pat, Stmt, Ty};
 
 pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
-    println!("evaluating expression: {expr}");
+    debug!("evaluating expression: {expr}");
 
     // std::thread::sleep(std::time::Duration::from_secs_f32(0.5));
+
+    // dbg!(scope);
 
     match expr {
         Expr::Call(expr, arg) => {
             let caller = eval(expr, scope)?;
-            println!("caller: {expr} eval'd caller: {caller} callee: {arg}");
+            debug!("caller: {expr} eval'd caller: {caller} callee: {arg}");
+
             match caller {
                 Expr::Var(ident) => {
                     let expr = Expr::Call(Box::new(scope.get(&ident)?.clone()), arg.clone());
@@ -20,11 +24,11 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
                 }
                 Expr::Lit(lit_expr) => bail!(
                     "attempted to call a literal value of type `{}` \
-                    (value `{lit_expr}`) with a value `{arg}`",
+                    (value `{lit_expr}`) with value `{arg}`",
                     lit_expr.ty()
                 ),
                 Expr::Lambda(lambda) => {
-                    println!("lambda: {lambda}");
+                    debug!("lambda: {lambda}");
 
                     match &**arg {
                         Expr::Call(arg, tail) => {
@@ -32,9 +36,13 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
 
                             type_check(&lambda.arg.ty, &arg)?;
 
-                            let expr = Expr::Call(lambda.expr, tail.clone());
+                            let expr = substitute(&lambda.expr, &lambda.arg.name, &arg);
+
+                            let expr = Expr::Call(Box::new(expr), tail.clone());
+
                             let scope = scope.with_var(lambda.arg.name.clone(), arg.clone());
-                            Ok(eval(&expr, &scope)?)
+
+                            eval(&expr, &scope)
                         }
                         _ => {
                             let arg = eval(arg, scope)?;
@@ -43,8 +51,11 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
 
                             // dbg!(&scope);
 
+                            let expr = substitute(&lambda.expr, &lambda.arg.name, &arg);
+
                             let scope = scope.with_var(lambda.arg.name.clone(), arg.clone());
-                            eval(&lambda.expr, &scope)
+
+                            eval(&expr, &scope)
                         }
                     }
                 }
@@ -80,7 +91,7 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
             let expr = eval(expr, scope)?;
 
             for arm in arms {
-                println!("checking arm: {arm}");
+                debug!("checking arm: {arm}");
 
                 match (&arm.pat, &expr) {
                     (Pat::Var(ident), _) => {
@@ -120,6 +131,63 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
         }
         Expr::Builtin(builtin) => builtin.call(scope),
         e => Ok(e.clone()),
+    }
+}
+
+pub fn substitute(expr: &Expr, var: &Ident, value: &Expr) -> Expr {
+    match expr {
+        Expr::Var(ident) => {
+            if ident == var {
+                value.clone()
+            } else {
+                Expr::Var(ident.clone())
+            }
+        }
+        Expr::Lambda(lambda) => {
+            if lambda.arg.name != *var {
+                Expr::Lambda(Lambda {
+                    arg: lambda.arg.clone(),
+                    ret: lambda.ret.clone(),
+                    expr: Box::new(substitute(&lambda.expr, var, value)),
+                })
+            } else {
+                Expr::Lambda(lambda.clone())
+            }
+        }
+        Expr::Call(caller, arg) => Expr::Call(
+            Box::new(substitute(caller, var, value)),
+            Box::new(substitute(arg, var, value)),
+        ),
+        Expr::Block(block) => {
+            if block.stmts.iter().any(|s| s.ident == *var) {
+                Expr::Block(block.clone())
+            } else {
+                Expr::Block(Block {
+                    stmts: block
+                        .stmts
+                        .iter()
+                        .map(|s| Stmt {
+                            ident: s.ident.clone(),
+                            value: substitute(&s.value, var, value),
+                        })
+                        .collect(),
+                    tail: Box::new(substitute(&block.tail, var, value)),
+                })
+            }
+        }
+        Expr::Case(expr, arms) => Expr::Case(
+            Box::new(substitute(expr, var, value)),
+            arms.iter()
+                .map(|arm| CaseArm {
+                    pat: arm.pat.clone(),
+                    expr: Box::new(substitute(&arm.expr, var, value)),
+                })
+                .collect(),
+        ),
+        Expr::Tuple(tuple) => {
+            Expr::Tuple(tuple.iter().map(|t| substitute(t, var, value)).collect())
+        }
+        _ => expr.clone(),
     }
 }
 
@@ -186,7 +254,7 @@ impl<'s> Scope<'s> {
             .ok_or_else(|| {
                 self.parent
                     .as_ref()
-                    .ok_or_else(|| anyhow!("variable `{i}` not found in this scope"))
+                    .ok_or_else(|| anyhow!("`{i}` not found in this scope"))
                     .and_then(|scope| scope.get(i))
             })
             .or_else(|x| x)

@@ -53,6 +53,7 @@ peg::parser! {
                 call_expr()
                 / simple_expr()
             )
+            _
             { e }
 
         pub rule call_expr() -> Expr

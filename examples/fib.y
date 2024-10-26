@@ -1,9 +1,11 @@
 {
-    fib = n: int => int case n
+    fib = i: int => int case i
         @ 0 = 0
         @ 1 = 1
-        @ n = add { fib { sub n 1 } } { fib { sub n 2 } };
+        @ i = add { fib { sub i 1 } } { fib { sub i 2 } };
+
     callWithN = n: int f: int -> int => int f n;
-    callWith3 = callWithN 3;
-    callWith3 fib
+    callWith3 = callWithN 30;
+    out = callWith3;
+    out fib
 }

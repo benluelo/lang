@@ -57,7 +57,7 @@
                 pkgs.lib.generators.toPretty { } value
             ) value;
           pkgs = nixpkgs.legacyPackages.${system}.appendOverlays (
-            with inputs; [ rust-overlay.overlays.default ]
+            [ rust-overlay.overlays.default ]
           );
 
           rust = pkgs.rust-bin.fromRustupToolchain {

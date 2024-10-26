@@ -1,6 +1,8 @@
 #![feature(trait_alias)]
 #![warn(clippy::unwrap_in_result)]
 
+use anyhow::bail;
+
 use crate::program::{eval, Scope};
 
 pub mod ast;
@@ -8,64 +10,95 @@ pub mod ast;
 pub mod program;
 
 fn main() -> anyhow::Result<()> {
-    let input = "
-entry = n: uint => uint {
-x=1;1
-};";
-    let input = "
-entry = n: uint => uint {
-    fib n m { x = 23; 1 } a: bool b: str => int a
-};";
-    let input = "{
-    fib = n: uint => uint case n
-        @ 0 = 0
-        @ 1 = 1
-        @ n = add { fib { sub n 1 } } { { sub n 2 } };
+    tracing_subscriber::fmt().init();
 
-    n: uint => uint {
-        fib n
-    }
-}
-";
-    let input = "(int, int)";
+    //     let input = "
+    // entry = n: uint => uint {
+    // x=1;1
+    // };";
+    //     let input = "
+    // entry = n: uint => uint {
+    //     fib n m { x = 23; 1 } a: bool b: str => int a
+    // };";
+    //     let input = "{
+    //     fib = n: uint => uint case n
+    //         @ 0 = 0
+    //         @ 1 = 1
+    //         @ n = add { fib { sub n 1 } } { { sub n 2 } };
+
+    //     n: uint => uint {
+    //         fib n
+    //     }
+    // }
+    // ";
+    //     let input = "(int, int)";
 
     let raw = std::env::args().nth(1).unwrap();
 
-    // let input = "case n @ n = add { sub n 1 } { sub n 2 }";
-    // let input = "case n @ n = n @ 1 = m n { n } { e }";
-    // let input = "case n
-    // @ 0 = 0
-    // @ 1 = 1
-    // @ n = add { sub n 1 } { sub n 2 }";
-    // let input = "entry = n: uint m: uint => uint { 1 }";
-    // let input = "n: uint";
+    match &*raw {
+        "eval" => {
+            // let input = "case n @ n = add { sub n 1 } { sub n 2 }";
+            // let input = "case n @ n = n @ 1 = m n { n } { e }";
+            // let input = "case n
+            // @ 0 = 0
+            // @ 1 = 1
+            // @ n = add { sub n 1 } { sub n 2 }";
+            // let input = "entry = n: uint m: uint => uint { 1 }";
+            // let input = "n: uint";
 
-    let res = ast::parse(&raw);
+            let res = ast::parse(&raw);
 
-    println!("raw: {raw}");
+            println!("raw: {raw}");
 
-    println!("{res:#?}");
+            println!("{res:#?}");
 
-    let program = res.unwrap();
+            let program = res.unwrap();
 
-    println!("in:  {program}");
+            println!("in:  {program}");
 
-    let scope = Scope::new(
-        [
-            (ident!("add"), builtins::add()),
-            (ident!("sub"), builtins::sub()),
-            (ident!("mul"), builtins::mul()),
-        ]
-        .into_iter()
-        .collect(),
-    );
+            let scope = Scope::new(
+                [
+                    (ident!("add"), builtins::add()),
+                    (ident!("sub"), builtins::sub()),
+                    (ident!("mul"), builtins::mul()),
+                ]
+                .into_iter()
+                .collect(),
+            );
 
-    dbg!(&scope);
+            dbg!(&scope);
 
-    let out = eval(&program, &scope)?;
+            let out = eval(&program, &scope)?;
 
-    println!("out: {out}");
-    Ok(())
+            println!("out: {out}");
+            Ok(())
+        }
+        "run" => {
+            let path = std::env::args().nth(2).unwrap();
+
+            let file = std::fs::read_to_string(path)?;
+
+            println!("raw: {file}");
+
+            let program = ast::parse(&file)?;
+
+            let scope = Scope::new(
+                [
+                    (ident!("add"), builtins::add()),
+                    (ident!("sub"), builtins::sub()),
+                    (ident!("mul"), builtins::mul()),
+                ]
+                .into_iter()
+                .collect(),
+            );
+
+            let out = eval(&program, &scope)?;
+
+            println!("out: {out}");
+            Ok(())
+        }
+        _ => bail!("unknown command `{raw}`"),
+    }
 }
 
 pub mod builtins {
@@ -89,7 +122,7 @@ pub mod builtins {
     use anyhow::bail;
 
     use crate::{
-        ast::{fold_lambda_expr, AtomTy, Builtin, Expr, Ident, Lambda, LambdaArg, LitExpr, Ty},
+        ast::{fold_lambda_expr, AtomTy, Builtin, Expr, Ident, LambdaArg, LitExpr, Ty},
         ident,
     };
 
