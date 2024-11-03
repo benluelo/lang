@@ -5,10 +5,22 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.91"
+itertools = "0.13.0"
 peg = { version = "0.8.4" }
 tracing = "0.1.40"
-tracing-subscriber = "0.3.18"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt", "ansi"] }
+
+[profile.release]
+lto = "fat"
 
 [features]
 default = []
 trace = ["peg/trace"]
+tracing-off = ["tracing/release_max_level_off"]
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+harness = false
+name    = "fib"

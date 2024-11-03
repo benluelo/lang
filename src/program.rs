@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-
-use anyhow::{anyhow, bail};
-use tracing::debug;
+use anyhow::{anyhow, bail, ensure};
+use itertools::Itertools;
+use tracing::{debug, instrument};
 
 use crate::ast::{AtomTy, Block, CaseArm, Expr, Ident, Lambda, LitExpr, Pat, Stmt, Ty};
 
-pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
-    debug!("evaluating expression: {expr}");
+#[instrument(name = "n", skip_all)]
+pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
+    debug!(%expr);
 
     // std::thread::sleep(std::time::Duration::from_secs_f32(0.5));
 
@@ -14,92 +14,139 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
 
     match expr {
         Expr::Call(expr, arg) => {
-            let caller = eval(expr, scope)?;
-            debug!("caller: {expr} eval'd caller: {caller} callee: {arg}");
+            let caller = normalize(expr)?;
+            debug!(caller = %expr, normalized_caller = %caller, callee = %arg);
 
             match caller {
-                Expr::Var(ident) => {
-                    let expr = Expr::Call(Box::new(scope.get(&ident)?.clone()), arg.clone());
-                    eval(&expr, scope)
-                }
                 Expr::Lit(lit_expr) => bail!(
                     "attempted to call a literal value of type `{}` \
                     (value `{lit_expr}`) with value `{arg}`",
                     lit_expr.ty()
                 ),
                 Expr::Lambda(lambda) => {
-                    debug!("lambda: {lambda}");
+                    debug!(%lambda, %arg);
 
-                    match &**arg {
+                    let sig = lambda.sig();
+
+                    let output = match &**arg {
                         Expr::Call(arg, tail) => {
-                            let arg = eval(arg, scope)?;
+                            let arg = normalize(arg)?;
 
                             type_check(&lambda.arg.ty, &arg)?;
 
-                            let expr = substitute(&lambda.expr, &lambda.arg.name, &arg);
+                            let expr = substitute(*lambda.expr, &lambda.arg.name, &arg);
 
                             let expr = Expr::Call(Box::new(expr), tail.clone());
 
-                            let scope = scope.with_var(lambda.arg.name.clone(), arg.clone());
-
-                            eval(&expr, &scope)
+                            normalize(&expr)?
                         }
                         _ => {
-                            let arg = eval(arg, scope)?;
+                            let arg = normalize(arg)?;
 
                             type_check(&lambda.arg.ty, &arg)?;
 
-                            // dbg!(&scope);
+                            let expr = substitute(*lambda.expr, &lambda.arg.name, &arg);
 
-                            let expr = substitute(&lambda.expr, &lambda.arg.name, &arg);
-
-                            let scope = scope.with_var(lambda.arg.name.clone(), arg.clone());
-
-                            eval(&expr, &scope)
+                            normalize(&expr)?
                         }
-                    }
+                    };
+
+                    type_check(&sig.1, &output)?;
+
+                    Ok(output)
                 }
                 Expr::Call(caller, caller2) => {
                     let expr = Expr::Call(caller, Box::new(Expr::Call(caller2, arg.clone())));
 
-                    eval(&expr, scope)
+                    normalize(&expr)
                 }
                 Expr::Block(_block) => todo!(),
                 Expr::Case(_expr, _vec) => todo!(),
-                Expr::Builtin(builtin) => eval(&Expr::Builtin(builtin), scope),
+                Expr::Builtin(builtin) => {
+                    debug!(%builtin, %arg);
+
+                    let output = match &**arg {
+                        Expr::Call(arg, tail) => {
+                            let arg = normalize(arg)?;
+
+                            let expr = Expr::Call(
+                                Box::new(normalize(&builtin.call(arg.clone())?)?),
+                                tail.clone(),
+                            );
+
+                            normalize(&expr)?
+                        }
+                        _ => {
+                            let arg = normalize(arg)?;
+
+                            normalize(&builtin.call(arg.clone())?)?
+                        }
+                    };
+
+                    type_check(&builtin.sig().1, &output)?;
+
+                    debug!(%output);
+
+                    Ok(output)
+                }
                 Expr::Tuple(_tuple) => bail!("attempted to call a tuple"),
+                _ => todo!(),
             }
         }
         Expr::Block(block) => {
-            let scope = if block.stmts.is_empty() {
-                scope
-            } else {
-                &Scope {
-                    parent: Some(scope),
-                    vars: block
-                        .stmts
-                        .clone()
-                        .into_iter()
-                        .map(|s| (s.ident, s.value))
-                        .collect(),
-                }
-            };
+            let mut block = block.clone();
 
-            eval(&block.tail, scope)
+            block
+                .stmts
+                .iter()
+                .map(|s| (&s.ident, &s.value))
+                .into_group_map()
+                .iter()
+                .filter(|x| x.1.len() > 1)
+                .map(|s| format!("duplicate definition of `{}`", s.0))
+                .reduce(|a, b| format!("{a}\n{b}"))
+                .map_or(Ok(()), |e| Err(anyhow!(e)))?;
+
+            for stmt in &block.stmts.clone() {
+                // let Some(stmt) = block.stmts.pop_front() else {
+                //     break;
+                // };
+
+                // TODO: Improve this check to recurse into subexpressions
+                if Expr::Symbol(stmt.ident.clone()) == stmt.value {
+                    bail!("recursive definition of `{}`", stmt.ident)
+                }
+
+                debug!(%block, %stmt);
+
+                block.stmts = block
+                    .stmts
+                    .into_iter()
+                    .map(|mut s| {
+                        s.value = substitute(s.value, &stmt.ident, &stmt.value);
+                        s
+                    })
+                    .collect();
+                block.tail = Box::new(substitute(*block.tail, &stmt.ident, &stmt.value));
+
+                // block.stmts.push_back(stmt);
+            }
+
+            normalize(&block.tail)
         }
         Expr::Case(expr, arms) => {
-            let expr = eval(expr, scope)?;
+            let expr = normalize(expr)?;
 
             for arm in arms {
-                debug!("checking arm: {arm}");
+                debug!(%arm);
 
                 match (&arm.pat, &expr) {
-                    (Pat::Var(ident), _) => {
-                        return eval(&arm.expr, &scope.with_var(ident.clone(), expr.clone()));
+                    (Pat::Symbol(ident), _) => {
+                        return normalize(&substitute(*arm.expr.clone(), ident, &expr));
                     }
-                    (Pat::Num(_), Expr::Var(_ident)) => todo!(),
+                    (Pat::Num(_), Expr::Symbol(_ident)) => todo!(),
                     (Pat::Num(pat), Expr::Lit(LitExpr::Int(n))) if pat == n => {
-                        return eval(&arm.expr, scope);
+                        return normalize(&arm.expr);
                     }
                     (Pat::Num(_), Expr::Lambda(_lambda)) => todo!(),
                     (Pat::Num(_), Expr::Call(_expr, _expr1)) => todo!(),
@@ -108,7 +155,7 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
                     (Pat::Num(_), Expr::Tuple(_vec)) => todo!(),
                     (Pat::Num(_), Expr::Builtin(_builtin)) => todo!(),
                     (Pat::Wildcard, _) => {
-                        return eval(&arm.expr, scope);
+                        return normalize(&arm.expr);
                     }
                     _ => {}
                 }
@@ -116,92 +163,108 @@ pub fn eval(expr: &Expr, scope: &Scope) -> anyhow::Result<Expr> {
 
             bail!("no arms matched")
         }
-        Expr::Var(var) => eval(scope.get(var)?, scope),
         Expr::Tuple(exprs) => {
             if exprs.len() == 1 {
-                eval(&exprs[0], scope)
+                normalize(&exprs[0])
             } else {
                 Ok(Expr::Tuple(
-                    exprs
-                        .iter()
-                        .map(|e| eval(e, scope))
-                        .collect::<Result<_, _>>()?,
+                    exprs.iter().map(normalize).collect::<Result<_, _>>()?,
                 ))
             }
         }
-        Expr::Builtin(builtin) => builtin.call(scope),
+        // if we hit a symbol that hasn't been substituted, it's undefined
+        Expr::Symbol(ident) => {
+            bail!("undefined symbol `{ident}`")
+        }
+        Expr::Lambda(lambda) => {
+            type_check(&lambda.ret, &lambda.expr)?;
+
+            Ok(Expr::Lambda(lambda.clone()))
+        }
         e => Ok(e.clone()),
     }
 }
 
-pub fn substitute(expr: &Expr, var: &Ident, value: &Expr) -> Expr {
+#[instrument(name = "s", skip_all)]
+pub fn substitute(expr: Expr, symbol: &Ident, value: &Expr) -> Expr {
+    debug!(%symbol, %value, into=%expr);
+
     match expr {
-        Expr::Var(ident) => {
-            if ident == var {
+        Expr::Symbol(ident) => {
+            if ident == *symbol {
+                debug!("found symbol {ident}, substituting with {value}");
                 value.clone()
             } else {
-                Expr::Var(ident.clone())
+                Expr::Symbol(ident.clone())
             }
         }
         Expr::Lambda(lambda) => {
-            if lambda.arg.name != *var {
+            if lambda.arg.name != *symbol {
                 Expr::Lambda(Lambda {
                     arg: lambda.arg.clone(),
                     ret: lambda.ret.clone(),
-                    expr: Box::new(substitute(&lambda.expr, var, value)),
+                    expr: Box::new(substitute(*lambda.expr, symbol, value)),
                 })
             } else {
                 Expr::Lambda(lambda.clone())
             }
         }
         Expr::Call(caller, arg) => Expr::Call(
-            Box::new(substitute(caller, var, value)),
-            Box::new(substitute(arg, var, value)),
+            Box::new(substitute(*caller, symbol, value)),
+            Box::new(substitute(*arg, symbol, value)),
         ),
-        Expr::Block(block) => {
-            if block.stmts.iter().any(|s| s.ident == *var) {
-                Expr::Block(block.clone())
-            } else {
-                Expr::Block(Block {
-                    stmts: block
-                        .stmts
-                        .iter()
-                        .map(|s| Stmt {
-                            ident: s.ident.clone(),
-                            value: substitute(&s.value, var, value),
-                        })
-                        .collect(),
-                    tail: Box::new(substitute(&block.tail, var, value)),
+        Expr::Block(block) => Expr::Block(Block {
+            stmts: block
+                .stmts
+                .into_iter()
+                .map(|s| Stmt {
+                    ident: s.ident.clone(),
+                    value: substitute(s.value, symbol, value),
                 })
-            }
-        }
+                .collect(),
+            tail: Box::new(substitute(*block.tail, symbol, value)),
+        }),
         Expr::Case(expr, arms) => Expr::Case(
-            Box::new(substitute(expr, var, value)),
-            arms.iter()
+            Box::new(substitute(*expr, symbol, value)),
+            // TODO: ensure shadowing rules apply correctly
+            arms.into_iter()
                 .map(|arm| CaseArm {
                     pat: arm.pat.clone(),
-                    expr: Box::new(substitute(&arm.expr, var, value)),
+                    expr: Box::new(substitute(*arm.expr, symbol, value)),
                 })
                 .collect(),
         ),
-        Expr::Tuple(tuple) => {
-            Expr::Tuple(tuple.iter().map(|t| substitute(t, var, value)).collect())
-        }
+        Expr::Tuple(tuple) => Expr::Tuple(
+            tuple
+                .into_iter()
+                .map(|t| substitute(t, symbol, value))
+                .collect(),
+        ),
         _ => expr.clone(),
     }
 }
 
-fn type_check(head_arg_ty: &Ty, arg: &Expr) -> anyhow::Result<()> {
-    match (&head_arg_ty, arg) {
+#[instrument(name = "t", skip_all)]
+pub fn type_check(ty: &Ty, expr: &Expr) -> anyhow::Result<()> {
+    debug!(%ty, %expr);
+
+    match (&ty, expr) {
         (Ty::Atom(AtomTy::Int), Expr::Lit(LitExpr::Int(_))) => Ok(()),
-        (Ty::Atom(AtomTy::Str), Expr::Lit(LitExpr::Str(_))) => Ok(()),
         (Ty::Atom(AtomTy::Bool), Expr::Lit(LitExpr::Bool(_))) => Ok(()),
         (ty, Expr::Block(block)) => type_check(ty, &block.tail),
-        (Ty::Tuple(ty), Expr::Tuple(e)) => {
-            ty.iter().zip(e).try_for_each(|(ty, e)| type_check(ty, e))
+        (Ty::Tuple(ty), Expr::Tuple(expr)) => {
+            ensure!(
+                ty.len() == expr.len(),
+                "attempted to use a tuple of length {} as a tuple of length {}",
+                expr.len(),
+                ty.len()
+            );
+            ty.iter()
+                .zip(expr)
+                .try_for_each(|(ty, expr)| type_check(ty, expr))
         }
         (ty, Expr::Call(head, _)) => type_check(ty, head),
-        (f @ Ty::Fn(_, _), Expr::Lambda(lambda)) => {
+        (Ty::Fn(f), Expr::Lambda(lambda)) => {
             if lambda.sig() == **f {
                 Ok(())
             } else {
@@ -210,53 +273,19 @@ fn type_check(head_arg_ty: &Ty, arg: &Expr) -> anyhow::Result<()> {
                 ))
             }
         }
+        (Ty::Fn(f), Expr::Builtin(builtin)) => {
+            let sig = builtin.sig();
+            if sig == **f {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "attempted to use builtin `{}` with type `{sig}` as an expression of type `{f}`",
+                    builtin.name()
+                ))
+            }
+        }
         _ => Err(anyhow!(
-            "attempted to use a value of type `{arg}` as a value of type `{head_arg_ty}`"
+            "attempted to use a value of type `{expr}` as a value of type `{ty}`"
         )),
-    }
-}
-
-pub struct Scope<'a> {
-    parent: Option<&'a Scope<'a>>,
-    vars: HashMap<Ident, Expr>,
-}
-
-impl std::fmt::Debug for Scope<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut d = f.debug_struct("Scope");
-
-        if let Some(parent) = self.parent {
-            d.field("parent", parent);
-        }
-
-        d.field("vars", &self.vars).finish()
-    }
-}
-
-impl<'s> Scope<'s> {
-    pub fn new(vars: HashMap<Ident, Expr>) -> Self {
-        Self { parent: None, vars }
-    }
-
-    pub fn with_var<'a>(&'a self, var: Ident, expr: Expr) -> Scope<'a>
-    where
-        'a: 's,
-    {
-        Self {
-            parent: Some(self),
-            vars: [(var, expr)].into_iter().collect(),
-        }
-    }
-
-    pub fn get(&self, i: &Ident) -> anyhow::Result<&Expr> {
-        self.vars
-            .get(i)
-            .ok_or_else(|| {
-                self.parent
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("`{i}` not found in this scope"))
-                    .and_then(|scope| scope.get(i))
-            })
-            .or_else(|x| x)
     }
 }

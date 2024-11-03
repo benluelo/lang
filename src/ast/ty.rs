@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{self, Debug, Display};
 
 use crate::ast::Ident;
 
@@ -7,12 +7,11 @@ pub enum Ty {
     Atom(AtomTy),
     /// (a, b, c, ...)
     Tuple(Vec<Ty>),
-    /// a -> b
-    Fn(Box<Ty>, Box<Ty>),
+    Fn(Box<FnTy>),
 }
 
 impl Display for Ty {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Ty::Atom(atom) => write!(f, "{atom}"),
             Ty::Tuple(vec) => {
@@ -25,10 +24,26 @@ impl Display for Ty {
                 }
                 write!(f, ")")
             }
-            Ty::Fn(a, b) => {
-                write!(f, "{a}->{b}")
+            Ty::Fn(fn_ty) => {
+                write!(f, "{fn_ty}")
             }
         }
+    }
+}
+
+/// a -> b
+#[derive(Clone, PartialEq, Eq)]
+pub struct FnTy(pub Ty, pub Ty);
+
+impl Debug for FnTy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}->{}", self.0, self.1)
+    }
+}
+
+impl Display for FnTy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
     }
 }
 
@@ -36,7 +51,6 @@ impl Display for Ty {
 pub enum AtomTy {
     Int,
     Bool,
-    Str,
     Named(Ident),
 }
 
@@ -45,7 +59,6 @@ impl AtomTy {
         match i.as_str() {
             "int" => AtomTy::Int,
             "bool" => AtomTy::Bool,
-            "str" => AtomTy::Str,
             _ => AtomTy::Named(i),
         }
     }
@@ -70,8 +83,6 @@ impl AtomTy {
             AtomTy::Int
         } else if const_bytes_equal("bool".as_bytes(), i.as_bytes()) {
             AtomTy::Bool
-        } else if const_bytes_equal("str".as_bytes(), i.as_bytes()) {
-            AtomTy::Str
         } else {
             AtomTy::Named(crate::ast::ident::Ident::new_static(i))
         }
@@ -79,11 +90,10 @@ impl AtomTy {
 }
 
 impl Display for AtomTy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AtomTy::Int => f.write_str("int"),
             AtomTy::Bool => f.write_str("bool"),
-            AtomTy::Str => f.write_str("str"),
             AtomTy::Named(ident) => write!(f, "{ident}"),
         }
     }

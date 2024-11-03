@@ -7,7 +7,7 @@ pub use ast::*;
 pub use expr::{Block, Builtin, CaseArm, Expr, Lambda, LambdaArg, LitExpr, Pat};
 pub use ident::Ident;
 pub use stmt::Stmt;
-pub use ty::{AtomTy, Ty};
+pub use ty::{AtomTy, FnTy, Ty};
 
 peg::parser! {
     grammar ast() for str {
@@ -41,7 +41,7 @@ peg::parser! {
                     ts.pop().unwrap()
                 } else {
                     ts.into_iter().rev().reduce(|a, b| {
-                        Ty::Fn(Box::new(b), Box::new(a))
+                        Ty::Fn(Box::new(FnTy(b, a)))
                     })
                     .expect("expected at least 2 values")
                 }
@@ -73,8 +73,8 @@ peg::parser! {
                 / block_expr()
                 / case_expr()
                 / tuple_expr()
-                // variable
-                / (i:ident() { Expr::Var(i) })
+                // symbol
+                / (i:ident() { Expr::Symbol(i) })
             )
             { e }
 
@@ -88,7 +88,7 @@ peg::parser! {
             = args:fn_args() _ "=>" _ t:ty() _ e:expr() { fold_lambda_expr(args, t, e) }
 
         pub rule block_expr() -> Expr
-            = _ "{" _ stmts:def()* _ tail:expr() _ "}" { Expr::Block(Block { stmts, tail: Box::new(tail) }) }
+            = _ "{" _ stmts:def()* _ tail:expr() _ "}" { Expr::Block(Block { stmts: stmts.into(), tail: Box::new(tail) }) }
 
         pub rule case_expr() -> Expr
             = _ "case" __ e:expr() _ arms:arm()* { Expr::Case(Box::new(e), arms) }
@@ -101,7 +101,7 @@ peg::parser! {
 
         pub rule pat() -> Pat
             = _ "@" _ n:num() { Pat::Num(n) }
-            / _ "@" _ i:ident() { Pat::Var(i) }
+            / _ "@" _ i:ident() { Pat::Symbol(i) }
 
         // https://github.com/fasterthanlime/pegviz#integration
         rule traced<T>(e: rule<T>) -> T =
@@ -127,7 +127,7 @@ pub fn fold_lambda_expr(mut args: Vec<LambdaArg>, t: Ty, e: Expr) -> Expr {
             expr: Box::new(e),
         },
         |prev, arg| Lambda {
-            ret: prev.sig(),
+            ret: Ty::Fn(Box::new(prev.sig())),
             arg,
             expr: Box::new(Expr::Lambda(prev)),
         },
@@ -143,7 +143,7 @@ mod tests {
     use std::fmt::Debug;
 
     use super::*;
-    use crate::ident;
+    use crate::{ast::FnTy, ident};
 
     #[track_caller]
     fn assert_parse<T: Debug + PartialEq>(
@@ -196,22 +196,19 @@ mod tests {
         assert_parse(
             ast::ty,
             "int -> int",
-            Ty::Fn(
-                Box::new(Ty::Atom(AtomTy::Int)),
-                Box::new(Ty::Atom(AtomTy::Int)),
-            ),
+            Ty::Fn(Box::new(FnTy(Ty::Atom(AtomTy::Int), Ty::Atom(AtomTy::Int)))),
         );
         assert_parse(
             ast::ty,
             "( ty  , ty,  ty ) -> int",
-            Ty::Fn(
-                Box::new(Ty::Tuple(vec![
+            Ty::Fn(Box::new(FnTy(
+                Ty::Tuple(vec![
                     Ty::Atom(AtomTy::Named(ident!("ty"))),
                     Ty::Atom(AtomTy::Named(ident!("ty"))),
                     Ty::Atom(AtomTy::Named(ident!("ty"))),
-                ])),
-                Box::new(Ty::Atom(AtomTy::Int)),
-            ),
+                ]),
+                Ty::Atom(AtomTy::Int),
+            ))),
         );
     }
 
@@ -238,10 +235,7 @@ mod tests {
             "n: int -> int",
             vec![LambdaArg {
                 name: ident!("n"),
-                ty: Ty::Fn(
-                    Box::new(Ty::Atom(AtomTy::Int)),
-                    Box::new(Ty::Atom(AtomTy::Int)),
-                ),
+                ty: Ty::Fn(Box::new(FnTy(Ty::Atom(AtomTy::Int), Ty::Atom(AtomTy::Int)))),
             }],
         );
         assert_parse(
@@ -260,20 +254,20 @@ mod tests {
         );
         assert_parse(
             ast::fn_args,
-            "n: int -> (bool, str -> int) m: int",
+            "n: int -> (bool, bool -> int) m: int",
             vec![
                 LambdaArg {
                     name: ident!("n"),
-                    ty: Ty::Fn(
-                        Box::new(Ty::Atom(AtomTy::Int)),
-                        Box::new(Ty::Tuple(vec![
+                    ty: Ty::Fn(Box::new(FnTy(
+                        Ty::Atom(AtomTy::Int),
+                        Ty::Tuple(vec![
                             Ty::Atom(AtomTy::Bool),
-                            Ty::Fn(
-                                Box::new(Ty::Atom(AtomTy::Str)),
-                                Box::new(Ty::Atom(AtomTy::Int)),
-                            ),
-                        ])),
-                    ),
+                            Ty::Fn(Box::new(FnTy(
+                                Ty::Atom(AtomTy::Bool),
+                                Ty::Atom(AtomTy::Int),
+                            ))),
+                        ]),
+                    ))),
                 },
                 LambdaArg {
                     name: ident!("m"),
@@ -317,7 +311,7 @@ mod tests {
                     name: ident!("n"),
                     ty: Ty::Atom(AtomTy::Int),
                 },
-                expr: Box::new(Expr::Var(ident!("n"))),
+                expr: Box::new(Expr::Symbol(ident!("n"))),
                 ret: Ty::Atom(AtomTy::Int),
             }),
         );
@@ -342,18 +336,18 @@ mod tests {
                         expr: Box::new(Expr::Lit(LitExpr::Int(1))),
                         ret: Ty::Atom(AtomTy::Int),
                     })),
-                    ret: Ty::Fn(
-                        Box::new(Ty::Atom(AtomTy::Named(ident!("c")))),
-                        Box::new(Ty::Atom(AtomTy::Int)),
-                    ),
+                    ret: Ty::Fn(Box::new(FnTy(
+                        Ty::Atom(AtomTy::Named(ident!("c"))),
+                        Ty::Atom(AtomTy::Int),
+                    ))),
                 })),
-                ret: Ty::Fn(
-                    Box::new(Ty::Atom(AtomTy::Named(ident!("b")))),
-                    Box::new(Ty::Fn(
-                        Box::new(Ty::Atom(AtomTy::Named(ident!("c")))),
-                        Box::new(Ty::Atom(AtomTy::Int)),
-                    )),
-                ),
+                ret: Ty::Fn(Box::new(FnTy(
+                    Ty::Atom(AtomTy::Named(ident!("b"))),
+                    Ty::Fn(Box::new(FnTy(
+                        Ty::Atom(AtomTy::Named(ident!("c"))),
+                        Ty::Atom(AtomTy::Int),
+                    ))),
+                ))),
             }),
         );
     }

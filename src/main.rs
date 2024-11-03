@@ -2,15 +2,20 @@
 #![warn(clippy::unwrap_in_result)]
 
 use anyhow::bail;
-
-use crate::program::{eval, Scope};
-
-pub mod ast;
-
-pub mod program;
+use lang::{
+    ast::{self, Block, Expr, Stmt},
+    builtins, ident,
+    program::normalize,
+};
+use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().init();
+    #[cfg(not(feature = "tracing-off"))]
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .without_time()
+        .with_target(false)
+        .init();
 
     //     let input = "
     // entry = n: uint => uint {
@@ -46,31 +51,39 @@ fn main() -> anyhow::Result<()> {
             // let input = "entry = n: uint m: uint => uint { 1 }";
             // let input = "n: uint";
 
-            let res = ast::parse(&raw);
-
-            println!("raw: {raw}");
+            let res = ast::parse(&std::env::args().nth(2).unwrap());
 
             println!("{res:#?}");
 
             let program = res.unwrap();
 
-            println!("in:  {program}");
+            println!("in: {program}");
 
-            let scope = Scope::new(
-                [
-                    (ident!("add"), builtins::add()),
-                    (ident!("sub"), builtins::sub()),
-                    (ident!("mul"), builtins::mul()),
+            let program = Expr::Block(Block {
+                stmts: [
+                    Stmt {
+                        ident: ident!("add"),
+                        value: builtins::add(),
+                    },
+                    // Stmt {
+                    //     ident: ident!("sub"),
+                    //     value: builtins::sub(),
+                    // },
+                    // Stmt {
+                    //     ident: ident!("mul"),
+                    //     value: builtins::mul(),
+                    // },
                 ]
-                .into_iter()
-                .collect(),
-            );
+                .into(),
+                tail: Box::new(program),
+            });
 
-            dbg!(&scope);
+            println!("full: {program}");
 
-            let out = eval(&program, &scope)?;
+            let out = normalize(&program)?;
 
             println!("out: {out}");
+
             Ok(())
         }
         "run" => {
@@ -82,86 +95,30 @@ fn main() -> anyhow::Result<()> {
 
             let program = ast::parse(&file)?;
 
-            let scope = Scope::new(
-                [
-                    (ident!("add"), builtins::add()),
-                    (ident!("sub"), builtins::sub()),
-                    (ident!("mul"), builtins::mul()),
+            let program = Expr::Block(Block {
+                stmts: [
+                    Stmt {
+                        ident: ident!("add"),
+                        value: builtins::add(),
+                    },
+                    // Stmt {
+                    //     ident: ident!("sub"),
+                    //     value: builtins::sub(),
+                    // },
+                    // Stmt {
+                    //     ident: ident!("mul"),
+                    //     value: builtins::mul(),
+                    // },
                 ]
-                .into_iter()
-                .collect(),
-            );
+                .into(),
+                tail: Box::new(program),
+            });
 
-            let out = eval(&program, &scope)?;
+            let out = normalize(&program)?;
 
             println!("out: {out}");
             Ok(())
         }
         _ => bail!("unknown command `{raw}`"),
-    }
-}
-
-pub mod builtins {
-    macro_rules! builtin {
-        (pub fn $f:ident($scope:ident: &Scope, $($arg:ident: $ty:ty),+) -> $ret:ty $body:block) => {
-            pub fn $f() -> Expr {
-                fold_lambda_expr(
-                    vec![$(
-                        LambdaArg {
-                            name: Ident::new_static(stringify!($arg)),
-                            ty: Ty::Atom(AtomTy::from_ident_static(stringify!($ty))),
-                        }
-                    ),+],
-                    Ty::Atom(AtomTy::from_ident_static(stringify!($ret))),
-                    Expr::Builtin(Builtin::new(stringify!($f), |$scope| $body)),
-                )
-            }
-        };
-    }
-
-    use anyhow::bail;
-
-    use crate::{
-        ast::{fold_lambda_expr, AtomTy, Builtin, Expr, Ident, LambdaArg, LitExpr, Ty},
-        ident,
-    };
-
-    builtin! {
-        pub fn add(scope: &Scope, a: int, b: int) -> int {
-            let a = scope.get(&ident!("a")).unwrap();
-            let b = scope.get(&ident!("b")).unwrap();
-
-            let (Expr::Lit(LitExpr::Int(a)), Expr::Lit(LitExpr::Int(b))) = (a, b) else {
-                bail!("cannot add `{a}` and `{b}`")
-            };
-
-            Ok(Expr::Lit(LitExpr::Int(a + b)))
-        }
-    }
-
-    builtin! {
-        pub fn sub(scope: &Scope, a: int, b: int) -> int {
-            let a = scope.get(&ident!("a")).unwrap();
-            let b = scope.get(&ident!("b")).unwrap();
-
-            let (Expr::Lit(LitExpr::Int(a)), Expr::Lit(LitExpr::Int(b))) = (a, b) else {
-                bail!("cannot sub `{a}` and `{b}`")
-            };
-
-            Ok(Expr::Lit(LitExpr::Int(a - b)))
-        }
-    }
-
-    builtin! {
-        pub fn mul(scope: &Scope, a: int, b: int) -> int {
-            let a = scope.get(&ident!("a")).unwrap();
-            let b = scope.get(&ident!("b")).unwrap();
-
-            let (Expr::Lit(LitExpr::Int(a)), Expr::Lit(LitExpr::Int(b))) = (a, b) else {
-                bail!("cannot mul `{a}` and `{b}`")
-            };
-
-            Ok(Expr::Lit(LitExpr::Int(a * b)))
-        }
     }
 }

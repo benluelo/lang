@@ -90,7 +90,6 @@
                 dbg
                 rust
                 ;
-
             };
           };
 
@@ -103,6 +102,7 @@
               ++ (with pkgs; [
                 jq
                 nil
+                cargo-flamegraph
               ]);
             nativeBuildInputs = [
               config.treefmt.build.wrapper
