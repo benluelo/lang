@@ -177,6 +177,14 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
             bail!("undefined symbol `{ident}`")
         }
         Expr::Lambda(lambda) => {
+            let mut lambda = lambda.clone();
+
+            lambda.expr = Box::new(substitute(
+                *lambda.expr.clone(),
+                &lambda.arg.name,
+                &Expr::DefinedSymbol(lambda.arg.name.clone(), lambda.arg.ty.clone()),
+            ));
+
             type_check(&lambda.ret, &lambda.expr)?;
 
             Ok(Expr::Lambda(lambda.clone()))
@@ -186,6 +194,7 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
 }
 
 #[instrument(name = "s", skip_all)]
+#[must_use]
 pub fn substitute(expr: Expr, symbol: &Ident, value: &Expr) -> Expr {
     debug!(%symbol, %value, into=%expr);
 
@@ -299,9 +308,13 @@ pub fn type_check(ty: &Ty, expr: &Expr) -> anyhow::Result<()> {
 }
 
 // NOTE: Assumes fully substituted expresssions
+#[instrument(name = "o", skip_all)]
 pub fn type_of(expr: &Expr) -> anyhow::Result<Ty> {
+    debug!(%expr);
+
     match expr {
         Expr::Symbol(ident) => Err(anyhow!("undefined symbol `{ident}`")),
+        Expr::DefinedSymbol(_, ty) => Ok(ty.clone()),
         Expr::Lit(lit_expr) => Ok(lit_expr.ty()),
         Expr::Lambda(lambda) => Ok(todo!()),
         Expr::Call(expr, arg) => {

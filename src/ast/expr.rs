@@ -13,6 +13,7 @@ use crate::{
 #[derive(Clone, PartialEq)]
 pub enum Expr {
     Symbol(Ident),
+    DefinedSymbol(Ident, Ty),
     Lit(LitExpr),
     Lambda(Lambda),
     Call(Box<Expr>, Box<Expr>),
@@ -33,6 +34,7 @@ impl Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Symbol(symbol) => write!(f, "{symbol}"),
+            Expr::DefinedSymbol(symbol, ty) => write!(f, "{symbol}#{ty}"),
             Expr::Lit(lit) => write!(f, "{lit}"),
             Expr::Lambda(lambda) => write!(f, "{lambda}"),
             Expr::Call(expr, arg) => write!(f, "{expr} {arg}"),
