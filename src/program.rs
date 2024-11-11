@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, ensure};
 use itertools::Itertools;
 use tracing::{debug, instrument};
 
-use crate::ast::{AtomTy, Block, CaseArm, Expr, Ident, Lambda, LitExpr, Pat, Stmt, Ty};
+use crate::ast::{AtomTy, Block, CaseArm, Expr, FnTy, Ident, Lambda, LitExpr, Pat, Stmt, Ty};
 
 #[instrument(name = "n", skip_all)]
 pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
@@ -14,10 +14,11 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
 
     match expr {
         Expr::Call(expr, arg) => {
-            let caller = normalize(expr)?;
-            debug!(caller = %expr, normalized_caller = %caller, callee = %arg);
+            let expr = normalize(expr)?;
 
-            match caller {
+            debug!(%expr, %arg);
+
+            match expr {
                 Expr::Lit(lit_expr) => bail!(
                     "attempted to call a literal value of type `{}` \
                     (value `{lit_expr}`) with value `{arg}`",
@@ -89,7 +90,20 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
 
                     Ok(output)
                 }
-                Expr::Tuple(_tuple) => bail!("attempted to call a tuple"),
+                Expr::Tuple(tuple) => match &**arg {
+                    Expr::Lit(LitExpr::Int(n)) => tuple
+                        .get(*n as usize)
+                        .ok_or(anyhow!(
+                            "cannot index into tuple of arity {} with index {n}",
+                            tuple.len()
+                        ))
+                        .cloned(),
+                    _ => bail!("attempted to call a tuple"),
+                },
+                Expr::DefinedSymbol(symbol, ty) => Ok(Expr::Call(
+                    Box::new(Expr::DefinedSymbol(symbol, ty)),
+                    arg.clone(),
+                )),
                 _ => todo!(),
             }
         }
@@ -207,6 +221,15 @@ pub fn substitute(expr: Expr, symbol: &Ident, value: &Expr) -> Expr {
                 Expr::Symbol(ident.clone())
             }
         }
+        Expr::DefinedSymbol(ident, ty) => {
+            if ident == *symbol {
+                assert_eq!(ty, type_of(value).unwrap());
+                debug!("found symbol {ident}, substituting with {value}");
+                value.clone()
+            } else {
+                Expr::DefinedSymbol(ident.clone(), ty.clone())
+            }
+        }
         Expr::Lambda(lambda) => {
             if lambda.arg.name != *symbol {
                 Expr::Lambda(Lambda {
@@ -293,16 +316,32 @@ pub fn type_check(ty: &Ty, expr: &Expr) -> anyhow::Result<()> {
                 ))
             }
         }
-        (ty, expr) => {
+        (Ty::Fn(f), expr) => {
             let expr_ty = type_of(expr)?;
 
-            if **ty == expr_ty {
+            if f.0 == expr_ty {
                 Ok(())
             } else {
                 Err(anyhow!(
-                    "attempted to use a value of type `{expr}` as a value of type `{ty}`"
+                    "attempted to use a value of type `{expr_ty}` (`{expr}`) as a value of type `{ty}`"
                 ))
             }
+        }
+        (ty, expr) => {
+            // let expr_ty = type_of(expr)?;
+
+            // dbg!(&ty, &expr, &expr_ty);
+
+            // todo!();
+
+            // if **ty == expr_ty {
+            //     Ok(())
+            // } else {
+            //     Err(anyhow!(
+            //         "attempted to use a value of type `{expr_ty}` (`{expr}`) as a value of type `{ty}`"
+            //     ))
+            // }
+            Ok(())
         }
     }
 }
@@ -312,26 +351,47 @@ pub fn type_check(ty: &Ty, expr: &Expr) -> anyhow::Result<()> {
 pub fn type_of(expr: &Expr) -> anyhow::Result<Ty> {
     debug!(%expr);
 
-    match expr {
+    let ty = match expr {
         Expr::Symbol(ident) => Err(anyhow!("undefined symbol `{ident}`")),
         Expr::DefinedSymbol(_, ty) => Ok(ty.clone()),
         Expr::Lit(lit_expr) => Ok(lit_expr.ty()),
         Expr::Lambda(lambda) => Ok(todo!()),
         Expr::Call(expr, arg) => {
             let expr_ty = type_of(expr)?;
-            let arg_ty = type_of(arg)?;
 
-            dbg!(expr_ty, arg_ty);
-
-            todo!();
+            match (expr_ty, &**arg) {
+                (Ty::Tuple(tuple), Expr::Lit(LitExpr::Int(n))) => tuple
+                    .get(*n as usize)
+                    .ok_or(anyhow!(
+                        "cannot index into tuple of arity {} with index {n}",
+                        tuple.len()
+                    ))
+                    .cloned(),
+                // (expr_ty, _) => Err(anyhow!(
+                //     "attempted to call an expression of type `{expr_ty}` \
+                //     (`{expr}`) with a value of type `{arg_ty}` (`{arg}`)"
+                // )),
+                (expr_ty, arg) => match (expr_ty, type_of(arg)?) {
+                    (Ty::Fn(fn_ty), arg_ty) if fn_ty.0 == arg_ty => Ok(fn_ty.1),
+                    (expr_ty, arg_ty) => Ok(Ty::Fn(Box::new(FnTy(expr_ty, arg_ty)))),
+                },
+            }
         }
         Expr::Block(block) => Ok(todo!()),
         Expr::Case(expr, vec) => Ok(todo!()),
-        Expr::Tuple(vec) => vec
-            .iter()
-            .map(type_of)
-            .collect::<Result<_, _>>()
-            .map(Ty::Tuple),
+        Expr::Tuple(tuple) => {
+            let mut tuple = tuple.iter().map(type_of).collect::<Result<Vec<_>, _>>()?;
+
+            Ok(if tuple.len() == 1 {
+                tuple.pop().unwrap()
+            } else {
+                Ty::Tuple(tuple)
+            })
+        }
         Expr::Builtin(builtin) => Ok(Ty::Fn(Box::new(builtin.sig()))),
-    }
+    }?;
+
+    debug!(%ty);
+
+    Ok(ty)
 }
