@@ -51,12 +51,12 @@ impl Display for Expr {
                 for (i, expr) in exprs.iter().enumerate() {
                     write!(f, "{expr}")?;
                     if i != exprs.len() - 1 {
-                        f.write_str(",")?;
+                        write!(f, ",")?;
                     }
                 }
                 write!(f, ")")
             }
-            Expr::Builtin(builtin) => write!(f, "{builtin:?}"),
+            Expr::Builtin(builtin) => write!(f, "{builtin}"),
         }
     }
 }

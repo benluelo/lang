@@ -18,7 +18,7 @@ impl Display for Ty {
                 write!(f, "(")?;
                 for (i, ty) in vec.iter().enumerate() {
                     write!(f, "{ty}")?;
-                    if i == vec.len() - 1 {
+                    if i != vec.len() - 1 {
                         write!(f, ",")?;
                     }
                 }

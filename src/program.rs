@@ -263,7 +263,7 @@ pub fn type_check(ty: &Ty, expr: &Expr) -> anyhow::Result<()> {
                 .zip(expr)
                 .try_for_each(|(ty, expr)| type_check(ty, expr))
         }
-        (ty, Expr::Call(head, _)) => type_check(ty, head),
+        // (ty, Expr::Call(head, _)) => type_check(ty, head),
         (Ty::Fn(f), Expr::Lambda(lambda)) => {
             if lambda.sig() == **f {
                 Ok(())
@@ -284,8 +284,41 @@ pub fn type_check(ty: &Ty, expr: &Expr) -> anyhow::Result<()> {
                 ))
             }
         }
-        _ => Err(anyhow!(
-            "attempted to use a value of type `{expr}` as a value of type `{ty}`"
-        )),
+        (ty, expr) => {
+            let expr_ty = type_of(expr)?;
+
+            if **ty == expr_ty {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "attempted to use a value of type `{expr}` as a value of type `{ty}`"
+                ))
+            }
+        }
+    }
+}
+
+// NOTE: Assumes fully substituted expresssions
+pub fn type_of(expr: &Expr) -> anyhow::Result<Ty> {
+    match expr {
+        Expr::Symbol(ident) => Err(anyhow!("undefined symbol `{ident}`")),
+        Expr::Lit(lit_expr) => Ok(lit_expr.ty()),
+        Expr::Lambda(lambda) => Ok(todo!()),
+        Expr::Call(expr, arg) => {
+            let expr_ty = type_of(expr)?;
+            let arg_ty = type_of(arg)?;
+
+            dbg!(expr_ty, arg_ty);
+
+            todo!();
+        }
+        Expr::Block(block) => Ok(todo!()),
+        Expr::Case(expr, vec) => Ok(todo!()),
+        Expr::Tuple(vec) => vec
+            .iter()
+            .map(type_of)
+            .collect::<Result<_, _>>()
+            .map(Ty::Tuple),
+        Expr::Builtin(builtin) => Ok(Ty::Fn(Box::new(builtin.sig()))),
     }
 }
