@@ -2,11 +2,7 @@
 #![warn(clippy::unwrap_in_result)]
 
 use anyhow::bail;
-use lang::{
-    ast::{self, Block, Expr, Stmt},
-    builtins, ident,
-    program::normalize,
-};
+use lang::{ast, builtins, program::normalize};
 use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
@@ -59,24 +55,7 @@ fn main() -> anyhow::Result<()> {
 
             println!("in: {program}");
 
-            let program = Expr::Block(Block {
-                stmts: [
-                    Stmt {
-                        ident: ident!("add"),
-                        value: builtins::add(),
-                    },
-                    // Stmt {
-                    //     ident: ident!("sub"),
-                    //     value: builtins::sub(),
-                    // },
-                    // Stmt {
-                    //     ident: ident!("mul"),
-                    //     value: builtins::mul(),
-                    // },
-                ]
-                .into(),
-                tail: Box::new(program),
-            });
+            let program = builtins::core(program);
 
             println!("full: {program}");
 
@@ -93,26 +72,7 @@ fn main() -> anyhow::Result<()> {
 
             println!("raw: {file}");
 
-            let program = ast::parse(&file)?;
-
-            let program = Expr::Block(Block {
-                stmts: [
-                    Stmt {
-                        ident: ident!("add"),
-                        value: builtins::add(),
-                    },
-                    // Stmt {
-                    //     ident: ident!("sub"),
-                    //     value: builtins::sub(),
-                    // },
-                    // Stmt {
-                    //     ident: ident!("mul"),
-                    //     value: builtins::mul(),
-                    // },
-                ]
-                .into(),
-                tail: Box::new(program),
-            });
+            let program = builtins::core(ast::parse(&file)?);
 
             let out = normalize(&program)?;
 

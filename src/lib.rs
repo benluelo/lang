@@ -25,7 +25,10 @@ pub mod builtins {
 
     use anyhow::bail;
 
-    use crate::ast::{AtomTy, Builtin, Expr, FnTy, LitExpr, Ty};
+    use crate::{
+        ast::{AtomTy, Block, Builtin, Expr, FnTy, LitExpr, Stmt, Ty},
+        ident,
+    };
 
     pub fn add() -> Expr {
         Expr::Builtin(Builtin::new(
@@ -105,4 +108,42 @@ pub mod builtins {
     //         Ok(Expr::Lit(LitExpr::Int(a * b)))
     //     }
     // }
+
+    pub fn core(expr: Expr) -> Expr {
+        Expr::Block(Block {
+            stmts: [
+                Stmt {
+                    ident: ident!("add"),
+                    value: add(),
+                },
+                // Stmt {
+                //     ident: ident!("sub"),
+                //     value: builtins::sub(),
+                // },
+                // Stmt {
+                //     ident: ident!("mul"),
+                //     value: builtins::mul(),
+                // },
+            ]
+            .into(),
+            tail: Box::new(expr),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ast::Expr, program::normalize};
+
+    #[test]
+    fn tests() {
+        let expr = normalize(&builtins::core(
+            ast::parse("{ idx = 1; (ns: (int, int) a: int => int add a (ns idx)) (1, 2) 1000 }")
+                .unwrap(),
+        ))
+        .unwrap();
+
+        assert_eq!(expr, Expr::Lit(ast::LitExpr::Int(1002)));
+    }
 }

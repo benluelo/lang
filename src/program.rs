@@ -327,22 +327,7 @@ pub fn type_check(ty: &Ty, expr: &Expr) -> anyhow::Result<()> {
                 ))
             }
         }
-        (ty, expr) => {
-            // let expr_ty = type_of(expr)?;
-
-            // dbg!(&ty, &expr, &expr_ty);
-
-            // todo!();
-
-            // if **ty == expr_ty {
-            //     Ok(())
-            // } else {
-            //     Err(anyhow!(
-            //         "attempted to use a value of type `{expr_ty}` (`{expr}`) as a value of type `{ty}`"
-            //     ))
-            // }
-            Ok(())
-        }
+        (_ty, _expr) => Ok(()),
     }
 }
 
@@ -355,7 +340,7 @@ pub fn type_of(expr: &Expr) -> anyhow::Result<Ty> {
         Expr::Symbol(ident) => Err(anyhow!("undefined symbol `{ident}`")),
         Expr::DefinedSymbol(_, ty) => Ok(ty.clone()),
         Expr::Lit(lit_expr) => Ok(lit_expr.ty()),
-        Expr::Lambda(lambda) => Ok(todo!()),
+        Expr::Lambda(_lambda) => todo!(),
         Expr::Call(expr, arg) => {
             let expr_ty = type_of(expr)?;
 
@@ -377,8 +362,8 @@ pub fn type_of(expr: &Expr) -> anyhow::Result<Ty> {
                 },
             }
         }
-        Expr::Block(block) => Ok(todo!()),
-        Expr::Case(expr, vec) => Ok(todo!()),
+        Expr::Block(_block) => todo!(),
+        Expr::Case(_expr, _vec) => todo!(),
         Expr::Tuple(tuple) => {
             let mut tuple = tuple.iter().map(type_of).collect::<Result<Vec<_>, _>>()?;
 
