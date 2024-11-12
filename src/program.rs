@@ -35,7 +35,7 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
 
                             type_check(&lambda.arg.ty, &arg)?;
 
-                            let expr = substitute(*lambda.expr, &lambda.arg.name, &arg);
+                            let expr = substitute(*lambda.expr, &lambda.arg.name, &arg)?;
 
                             let expr = Expr::Call(Box::new(expr), tail.clone());
 
@@ -46,7 +46,7 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
 
                             type_check(&lambda.arg.ty, &arg)?;
 
-                            let expr = substitute(*lambda.expr, &lambda.arg.name, &arg);
+                            let expr = substitute(*lambda.expr, &lambda.arg.name, &arg)?;
 
                             normalize(&expr)?
                         }
@@ -137,11 +137,11 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
                     .stmts
                     .into_iter()
                     .map(|mut s| {
-                        s.value = substitute(s.value, &stmt.ident, &stmt.value);
-                        s
+                        s.value = substitute(s.value, &stmt.ident, &stmt.value)?;
+                        Ok(s)
                     })
-                    .collect();
-                block.tail = Box::new(substitute(*block.tail, &stmt.ident, &stmt.value));
+                    .collect::<anyhow::Result<_>>()?;
+                block.tail = Box::new(substitute(*block.tail, &stmt.ident, &stmt.value)?);
 
                 // block.stmts.push_back(stmt);
             }
@@ -156,7 +156,7 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
 
                 match (&arm.pat, &expr) {
                     (Pat::Symbol(ident), _) => {
-                        return normalize(&substitute(*arm.expr.clone(), ident, &expr));
+                        return normalize(&substitute(*arm.expr.clone(), ident, &expr)?);
                     }
                     (Pat::Num(_), Expr::Symbol(_ident)) => todo!(),
                     (Pat::Num(pat), Expr::Lit(LitExpr::Int(n))) if pat == n => {
@@ -197,7 +197,7 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
                 *lambda.expr.clone(),
                 &lambda.arg.name,
                 &Expr::DefinedSymbol(lambda.arg.name.clone(), lambda.arg.ty.clone()),
-            ));
+            )?);
 
             type_check(&lambda.ret, &lambda.expr)?;
 
@@ -209,70 +209,78 @@ pub fn normalize(expr: &Expr) -> anyhow::Result<Expr> {
 
 #[instrument(name = "s", skip_all)]
 #[must_use]
-pub fn substitute(expr: Expr, symbol: &Ident, value: &Expr) -> Expr {
+pub fn substitute(expr: Expr, symbol: &Ident, value: &Expr) -> anyhow::Result<Expr> {
     debug!(%symbol, %value, into=%expr);
 
     match expr {
         Expr::Symbol(ident) => {
             if ident == *symbol {
                 debug!("found symbol {ident}, substituting with {value}");
-                value.clone()
+                Ok(value.clone())
             } else {
-                Expr::Symbol(ident.clone())
+                Ok(Expr::Symbol(ident.clone()))
             }
         }
         Expr::DefinedSymbol(ident, ty) => {
             if ident == *symbol {
-                assert_eq!(ty, type_of(value).unwrap());
+                let value_ty = type_of(value)?;
+                ensure!(
+                    ty == value_ty,
+                    "symbol `{ident}` is of type `{ty}`, but attempted \
+                    to substitute a value of type `{value_ty}` (`{value}`)"
+                );
                 debug!("found symbol {ident}, substituting with {value}");
-                value.clone()
+                Ok(value.clone())
             } else {
-                Expr::DefinedSymbol(ident.clone(), ty.clone())
+                Ok(Expr::DefinedSymbol(ident.clone(), ty.clone()))
             }
         }
         Expr::Lambda(lambda) => {
             if lambda.arg.name != *symbol {
-                Expr::Lambda(Lambda {
+                Ok(Expr::Lambda(Lambda {
                     arg: lambda.arg.clone(),
                     ret: lambda.ret.clone(),
-                    expr: Box::new(substitute(*lambda.expr, symbol, value)),
-                })
+                    expr: Box::new(substitute(*lambda.expr, symbol, value)?),
+                }))
             } else {
-                Expr::Lambda(lambda.clone())
+                Ok(Expr::Lambda(lambda.clone()))
             }
         }
-        Expr::Call(caller, arg) => Expr::Call(
-            Box::new(substitute(*caller, symbol, value)),
-            Box::new(substitute(*arg, symbol, value)),
-        ),
-        Expr::Block(block) => Expr::Block(Block {
+        Expr::Call(caller, arg) => Ok(Expr::Call(
+            Box::new(substitute(*caller, symbol, value)?),
+            Box::new(substitute(*arg, symbol, value)?),
+        )),
+        Expr::Block(block) => Ok(Expr::Block(Block {
             stmts: block
                 .stmts
                 .into_iter()
-                .map(|s| Stmt {
-                    ident: s.ident.clone(),
-                    value: substitute(s.value, symbol, value),
+                .map(|s| {
+                    Ok(Stmt {
+                        ident: s.ident.clone(),
+                        value: substitute(s.value, symbol, value)?,
+                    })
                 })
-                .collect(),
-            tail: Box::new(substitute(*block.tail, symbol, value)),
-        }),
-        Expr::Case(expr, arms) => Expr::Case(
-            Box::new(substitute(*expr, symbol, value)),
-            // TODO: ensure shadowing rules apply correctly
+                .collect::<anyhow::Result<_>>()?,
+            tail: Box::new(substitute(*block.tail, symbol, value)?),
+        })),
+        Expr::Case(expr, arms) => Ok(Expr::Case(
+            Box::new(substitute(*expr, symbol, value)?),
             arms.into_iter()
-                .map(|arm| CaseArm {
-                    pat: arm.pat.clone(),
-                    expr: Box::new(substitute(*arm.expr, symbol, value)),
+                .map(|arm| {
+                    Ok(CaseArm {
+                        pat: arm.pat.clone(),
+                        expr: Box::new(substitute(*arm.expr, symbol, value)?),
+                    })
                 })
-                .collect(),
-        ),
-        Expr::Tuple(tuple) => Expr::Tuple(
+                .collect::<anyhow::Result<_>>()?,
+        )),
+        Expr::Tuple(tuple) => Ok(Expr::Tuple(
             tuple
                 .into_iter()
                 .map(|t| substitute(t, symbol, value))
-                .collect(),
-        ),
-        _ => expr.clone(),
+                .collect::<Result<_, _>>()?,
+        )),
+        _ => Ok(expr.clone()),
     }
 }
 
